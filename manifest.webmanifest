@@ -1,0 +1,17 @@
+{
+  "name": "AquaConseil — Eau de piscine & spa",
+  "short_name": "AquaConseil",
+  "description": "Analyse de l'eau de piscine/spa par photo de bandelette et conseils d'entretien.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#06222b",
+  "theme_color": "#0b7285",
+  "lang": "fr",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512-mask.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

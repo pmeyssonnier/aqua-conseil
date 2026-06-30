@@ -34,6 +34,13 @@ usage **hors-ligne** : il suffit d'ouvrir `index.html` dans un navigateur
 Ouvrir `index.html`. Pour une lecture photo plus juste : lumière du jour
 indirecte, bandelette bien à plat, **calibrer le blanc** avant de pipeter.
 
+## Installation (PWA)
+
+L'app est une **Progressive Web App** : depuis l'URL en ligne (GitHub Pages),
+le navigateur propose **« Ajouter à l'écran d'accueil »** (Android/Chrome) ou
+**Partager → Sur l'écran d'accueil** (iOS/Safari). Une fois installée, elle
+s'ouvre en plein écran et fonctionne **hors-ligne** (service worker + cache).
+
 ## Avertissement
 
 Les dosages sont des **estimations** : ils dépendent de la concentration réelle
