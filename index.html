@@ -73,7 +73,7 @@
     background:linear-gradient(180deg,var(--accent),var(--accent2));
     color:#03252e;border-color:transparent;font-weight:700;box-shadow:0 4px 14px rgba(34,195,214,.35)
   }
-  .hint{color:var(--muted);font-size:12px;margin-top:6px}
+  .hint{color:var(--muted);font-size:12.5px;margin-top:6px}
   .row-help{display:flex;gap:8px;align-items:flex-end}
   .btn{
     appearance:none;border:1px solid var(--line);background:#0c3947;color:var(--txt);
@@ -117,13 +117,13 @@
   }
   @media(min-width:620px){.param{grid-template-columns:150px 1fr 130px;align-items:center}}
   .param .pname{font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px}
-  .param .pname small{display:block;color:var(--muted);font-weight:500;font-size:11px}
+  .param .pname small{display:block;color:var(--muted);font-weight:500;font-size:12.5px}
   .ctrl{display:flex;gap:8px;align-items:center}
   .ctrl input[type=range]{flex:1}
   .swatch{width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,255,255,.25);flex:0 0 auto;background:#08303b}
   .valbox{display:flex;align-items:center;gap:6px}
   .valbox input{width:80px;text-align:center;font-weight:700}
-  .unit{color:var(--muted);font-size:12px}
+  .unit{color:var(--muted);font-size:12.5px}
   .pill{font-size:11px;padding:2px 8px;border-radius:999px;font-weight:700;white-space:nowrap}
   .pill.ok{background:rgba(39,192,147,.16);color:var(--ok)}
   .pill.lo{background:rgba(244,183,64,.16);color:var(--warn)}
@@ -310,7 +310,7 @@
     <label class="field"><b>Type de bandelette</b> (préréglage rapide)</label>
     <div class="toggle-list" id="strip-presets">
       <button type="button" class="chip" data-preset="aquachek4" aria-pressed="false">🟡 AquaChek 4-en-1</button>
-      <button type="button" class="chip" data-preset="full6" aria-pressed="false">🧪 6-en-1 complète</button>
+      <button type="button" class="chip" data-preset="full6" aria-pressed="false">🧪 Complète (5 mesures)</button>
       <button type="button" class="chip" data-preset="brome" aria-pressed="false">🟤 Spa au brome</button>
     </div>
 
@@ -382,7 +382,7 @@ const pipetteInfo = {};
 /* Préréglage de bandelette actuellement sélectionné (pour le désélectionner si
    l'utilisateur modifie ensuite un réglage à la main). */
 let activePreset=null;
-const PRESET_LABELS={ aquachek4:'AquaChek 4-en-1', full6:'6-en-1 complète', brome:'Spa au brome' };
+const PRESET_LABELS={ aquachek4:'AquaChek 4-en-1', full6:'Complète (5 mesures)', brome:'Spa au brome' };
 function clearPresetSelection(){
   if(!activePreset) return;
   activePreset=null;
@@ -488,9 +488,13 @@ function targets(){
   } else { // chlore ou sel
     t.cl = spa ? { lo:3, hi:5, ideal:[3,5] } : { lo:1, hi:3, ideal:[1,3] };
   }
-  // Stabilisant : pertinent surtout piscine extérieure au chlore (pas spa, pas couvert)
-  if(state.sanitizer!=='brome' && state.sanitizer!=='oxygene' && state.location==='exterieur' && !spa){
-    t.cya = { lo:30, hi:50, ideal:[30,50] };
+  // Stabilisant (chlore/sel, hors spa). Extérieur : viser 30–50. Couvert : inutile
+  // d'en ajouter (cible 0–50), mais un excès bloque quand même le chlore → on le
+  // signale aussi à l'intérieur.
+  if(state.sanitizer!=='brome' && state.sanitizer!=='oxygene' && !spa){
+    t.cya = state.location==='exterieur'
+      ? { lo:30, hi:50, ideal:[30,50] }
+      : { lo:0,  hi:50, ideal:[0,50] };
   }
   if(state.sanitizer==='sel'){
     t.sel = { lo:3, hi:5, ideal:[3,5] }; // dépend de l'électrolyseur — ordre de grandeur
@@ -655,7 +659,7 @@ function renderParamRows(){
     const name=document.createElement('div'); name.className='pname';
     name.innerHTML = `<span>${p.name}</span>`;
     const small=document.createElement('small');
-    small.textContent = t ? `cible ${t.ideal[0]}–${t.ideal[1]}${p.unit?(' '+p.unit):''}` : p.desc;
+    small.textContent = t ? `cible ${fr(t.ideal[0])}–${fr(t.ideal[1])}${p.unit?(' '+p.unit):''}` : p.desc;
     name.appendChild(small);
     // badge de confiance : n'apparaît qu'après une lecture pipette
     const confEl=document.createElement('small'); confEl.className='confbadge'; confEl.hidden=true;
@@ -896,10 +900,8 @@ function fmtDose(grams){
   if(grams>=1000) return (grams/1000).toFixed(grams>=10000?0:1).replace('.',',')+' kg';
   return Math.round(grams)+' g';
 }
-function fmtMl(ml){
-  if(ml>=1000) return (ml/1000).toFixed(1).replace('.',',')+' L';
-  return Math.round(ml)+' mL';
-}
+// Affiche un nombre à la française (virgule décimale) dans les textes/diagnostics.
+function fr(n){ return String(n).replace('.',','); }
 
 function analyze(){
   const V=state.volume, t=targets();
@@ -935,11 +937,11 @@ function analyze(){
     const val=values.ph;
     if(val < t.ph.lo){
       const d=(7.3-val)/0.1 * 8 * V; // ~8 g/m³ par +0.1 (carbonate de sodium)
-      actions.push(pa(2,'pH trop bas (eau acide)', `pH ≈ <b>${val}</b> (cible 7,2–7,4). Eau corrosive (métaux, joints, liner) et désinfectant agressif.`,
+      actions.push(pa(2,'pH trop bas (eau acide)', `pH ≈ <b>${fr(val)}</b> (cible 7,2–7,4). Eau corrosive (métaux, joints, liner) et désinfectant agressif.`,
         `Ajouter ≈ <span class="dose">${fmtDose(d)}</span> de <b>pH+</b> (carbonate de sodium). Diluer/verser en marche, re-tester après 4–6 h.`,true));
     } else if(val > t.ph.hi){
       const d=(val-7.3)/0.1 * 10 * V; // ~10 g/m³ par -0.1 (bisulfate de sodium)
-      actions.push(pa(2,'pH trop haut (eau basique)', `pH ≈ <b>${val}</b> (cible 7,2–7,4). Au-dessus de 7,6 le chlore perd beaucoup d'efficacité et le calcaire précipite.`,
+      actions.push(pa(2,'pH trop haut (eau basique)', `pH ≈ <b>${fr(val)}</b> (cible 7,2–7,4). Au-dessus de 7,6 le chlore perd beaucoup d'efficacité et le calcaire précipite.`,
         `Ajouter ≈ <span class="dose">${fmtDose(d)}</span> de <b>pH-</b> (bisulfate de sodium) — ou l'équivalent liquide selon notice. Re-tester après 4–6 h.`,true));
     }
   }
@@ -955,24 +957,24 @@ function analyze(){
       const prod = spa
         ? '<b>dichlore</b> (chlore stabilisé en granulés, adapté aux petits volumes chauds)'
         : '<b>chlore non stabilisé</b> (hypochlorite de calcium 70 %)';
-      actions.push(pa(3,'Chlore libre insuffisant', `Chlore libre ≈ <b>${val} ppm</b> (cible ${t.cl.ideal[0]}–${t.cl.ideal[1]}). En dessous, l'eau n'est plus protégée (risque d'algues, eau trouble).`,
+      actions.push(pa(3,'Chlore libre insuffisant', `Chlore libre ≈ <b>${fr(val)} ppm</b> (cible ${t.cl.ideal[0]}–${t.cl.ideal[1]}). En dessous, l'eau n'est plus protégée (risque d'algues, eau trouble).`,
         `Chlorer ≈ <span class="dose">${fmtDose(d)}</span> de ${prod}${(!spa && state.location==='exterieur')?', de préférence en soirée':''}. `
         + `⚠️ <b>Ne jamais mettre en contact direct</b> l'hypochlorite de calcium et le chlore stabilisé (galets/trichlore) — même doseur, même skimmer : réaction violente possible. `
         + (overStab?'⚠️ Stabilisant élevé : le chlore est « bloqué », une vidange partielle peut être nécessaire. ':'')
         + `Vérifie aussi le pH (chlore inefficace si pH>7,6), et <b>attends que le chlore libre soit redescendu ≤ ${t.cl.hi} ppm avant la baignade</b>.`,true));
     } else if(val > t.cl.hi){
-      actions.push(pa(3,'Chlore trop élevé', `Chlore libre ≈ <b>${val} ppm</b> (cible ${t.cl.ideal[0]}–${t.cl.ideal[1]}). Baignade déconseillée tant que > ${t.cl.hi+1} ppm (irritations).`,
-        `Stopper toute chloration, laisser filtrer ; à l'extérieur le soleil fait baisser le taux en 1–2 jours. Pour accélérer : <b>neutralisant de chlore</b> (thiosulfate) selon notice, ou dilution.`,false));
+      actions.push(pa(3,'Chlore trop élevé', `Chlore libre ≈ <b>${fr(val)} ppm</b> (cible ${t.cl.ideal[0]}–${t.cl.ideal[1]}). Baignade déconseillée tant que > ${t.cl.hi+1} ppm (irritations).`,
+        `Stopper toute chloration, laisser filtrer${state.location==='exterieur'?' ; à l\'extérieur le soleil fait baisser le taux en 1–2 jours':''}. Pour accélérer : <b>neutralisant de chlore</b> (thiosulfate) selon notice, ou dilution.`,false));
     }
   }
   if(active.has('br') && t.br){
     const val=values.br;
     if(val < t.br.lo){
       const d=(t.br.ideal[1]-val) * 2.2 * V; // ~2,2 g/m³ par +1 ppm
-      actions.push(pa(3,'Brome insuffisant', `Brome ≈ <b>${val} ppm</b> (cible ${t.br.ideal[0]}–${t.br.ideal[1]}).`,
+      actions.push(pa(3,'Brome insuffisant', `Brome ≈ <b>${fr(val)} ppm</b> (cible ${t.br.ideal[0]}–${t.br.ideal[1]}).`,
         `Ajouter ≈ <span class="dose">${fmtDose(d)}</span> de <b>brome</b> (pastilles dans le brominateur, ou choc bromé), et vérifie que le brominateur débite assez.`,true));
     } else if(val > t.br.hi){
-      actions.push(pa(3,'Brome trop élevé', `Brome ≈ <b>${val} ppm</b> (cible ${t.br.ideal[0]}–${t.br.ideal[1]}).`,
+      actions.push(pa(3,'Brome trop élevé', `Brome ≈ <b>${fr(val)} ppm</b> (cible ${t.br.ideal[0]}–${t.br.ideal[1]}).`,
         `Réduire le débit du brominateur et attendre, ou diluer. Éviter la baignade tant que le taux est haut.`,false));
     }
   }
@@ -984,10 +986,10 @@ function analyze(){
     const val=values.sel;
     if(val < t.sel.lo){
       const d=(t.sel.ideal[0]-val) * V; // g/L * m³(=1000 L) → kg ; 1 g/L sur 1 m³ = 1000 g
-      actions.push(pa(3,'Sel insuffisant (électrolyse)', `Sel ≈ <b>${val} g/L</b> (cible usuelle ${t.sel.ideal[0]}–${t.sel.ideal[1]} g/L, voir notice de l'électrolyseur).`,
+      actions.push(pa(3,'Sel insuffisant (électrolyse)', `Sel ≈ <b>${fr(val)} g/L</b> (cible usuelle ${t.sel.ideal[0]}–${t.sel.ideal[1]} g/L, voir notice de l'électrolyseur).`,
         `Ajouter ≈ <span class="dose">${fmtDose(d*1000)}</span> de <b>sel spécial piscine</b>, pompe en marche, sans faire fonctionner la cellule pendant la dissolution (24 h).`,true));
     } else if(val > t.sel.hi){
-      actions.push(pa(3,'Sel trop élevé', `Sel ≈ <b>${val} g/L</b>. Un excès peut endommager la cellule et corroder certaines pièces.`,
+      actions.push(pa(3,'Sel trop élevé', `Sel ≈ <b>${fr(val)} g/L</b>. Un excès peut endommager la cellule et corroder certaines pièces.`,
         `Diluer avec de l'eau neuve jusqu'à revenir dans la plage de l'électrolyseur.`,false));
     }
   }
@@ -1082,10 +1084,12 @@ function render(actions, problems, measured){
 
   // entretien / filtration
   const fh=filtrationTime();
+  const filtLine = state.type==='spa'
+    ? `⏱️ Spa : filtration par <b>cycles programmés</b> (souvent quelques cycles/jour, ~2–4 h au total), à ajuster selon l'usage et la notice de la pompe — la règle « température ÷ 2 » vaut pour les piscines, pas pour les spas.`
+    : `⏱️ Temps de filtration conseillé : ≈ <span class="dose">${fh} h/jour</span> (règle « température ÷ 2 », ici ${state.temp}°C). Par forte chaleur ou fréquentation, augmente la durée.`;
   maint.innerHTML=`<div class="action">
     <h3>🛠️ Entretien & filtration</h3>
-    <p>⏱️ Temps de filtration conseillé : ≈ <span class="dose">${fh} h/jour</span> (règle « température ÷ 2 », ici ${state.temp}°C).
-       Par forte chaleur ou fréquentation, augmente la durée.</p>
+    <p>${filtLine}</p>
     <p>${filterAdvice()}</p>
     <ul class="tight">
       <li>Régler le <b>TAC puis le pH</b> avant la désinfection — l'ordre compte.</li>
