@@ -167,6 +167,21 @@
   @media(min-width:620px){.twocol{grid-template-columns:1fr 1fr}}
   .kv{font-size:13px;color:var(--muted)}
   .kv b{color:var(--txt)}
+  /* toast (remplace les alert()) */
+  .toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);
+    background:#0c3947;color:var(--txt);border:1px solid var(--accent);
+    padding:12px 16px;border-radius:12px;box-shadow:var(--shadow);z-index:40;
+    font-size:14px;max-width:90vw;text-align:center;font-weight:600}
+  /* badge de confiance de la lecture pipette */
+  .confbadge{display:block;font-weight:700;font-size:11px;margin-top:3px}
+  .confbadge.c-bonne{color:var(--ok)}
+  .confbadge.c-moyenne{color:var(--warn)}
+  .confbadge.c-faible{color:var(--bad)}
+  /* focus clavier visible */
+  .drop:focus-visible, .chip:focus-visible, .btn:focus-visible,
+  .seg button:focus-visible, input:focus-visible{
+    outline:2px solid var(--accent); outline-offset:2px}
+  button.chip{font-family:inherit}
 </style>
 </head>
 <body>
@@ -264,7 +279,7 @@
     <p class="sub">Prends la bandelette en photo (lumière du jour, fond neutre). Puis clique sur chaque pastille pour échantillonner sa couleur — l'app proposera la valeur la plus proche, que tu peux corriger.</p>
 
     <input id="file" type="file" accept="image/*" hidden>
-    <div class="drop" id="drop">
+    <div class="drop" id="drop" role="button" tabindex="0" aria-label="Prendre ou choisir une photo de bandelette">
       📷 <b>Toucher pour prendre / choisir une photo</b><br>
       <span style="font-size:13px">(facultatif — tu peux aussi saisir les valeurs à la main ci-dessous)</span>
     </div>
@@ -294,9 +309,9 @@
 
     <label class="field"><b>Type de bandelette</b> (préréglage rapide)</label>
     <div class="toggle-list" id="strip-presets">
-      <div class="chip" data-preset="aquachek4">🟡 AquaChek 4-en-1</div>
-      <div class="chip" data-preset="full6">🧪 6-en-1 complète</div>
-      <div class="chip" data-preset="brome">🟤 Spa au brome</div>
+      <button type="button" class="chip" data-preset="aquachek4" aria-pressed="false">🟡 AquaChek 4-en-1</button>
+      <button type="button" class="chip" data-preset="full6" aria-pressed="false">🧪 6-en-1 complète</button>
+      <button type="button" class="chip" data-preset="brome" aria-pressed="false">🟤 Spa au brome</button>
     </div>
 
     <div class="toggle-list" id="param-toggles"></div>
@@ -310,7 +325,7 @@
       <span>⚠️ Valeurs modifiées depuis la dernière analyse — le diagnostic ci-dessous est peut-être périmé.</span>
       <button type="button" id="rerun-btn">Relancer l'analyse</button>
     </div>
-    <div id="verdict"></div>
+    <div id="verdict" role="status" aria-live="polite"></div>
     <div id="actions"></div>
     <div id="maintenance"></div>
     <p class="disclaimer" id="disclaimer"></p>
@@ -324,6 +339,8 @@
 <div class="footer">
   AquaConseil — outil d'aide. Les dosages sont des <b>estimations</b> ; suivez toujours la notice de vos produits et re-testez l'eau après traitement.
 </div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
 "use strict";
@@ -350,6 +367,28 @@ function markStale(){
   document.getElementById('stale-banner').hidden=false;
 }
 
+/* Notification transitoire (remplace alert()) */
+let toastTimer=null;
+function toast(msg, ms=3400){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.hidden=false;
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ t.hidden=true; }, ms);
+}
+
+/* Confiance de la dernière lecture pipette, par paramètre (affichée dans la ligne) */
+const pipetteInfo = {};
+
+/* Préréglage de bandelette actuellement sélectionné (pour le désélectionner si
+   l'utilisateur modifie ensuite un réglage à la main). */
+let activePreset=null;
+const PRESET_LABELS={ aquachek4:'AquaChek 4-en-1', full6:'6-en-1 complète', brome:'Spa au brome' };
+function clearPresetSelection(){
+  if(!activePreset) return;
+  activePreset=null;
+  document.querySelectorAll('#strip-presets .chip').forEach(c=>c.setAttribute('aria-pressed','false'));
+}
+
 /* --- Sélecteurs segmentés génériques --- */
 function bindSeg(id, key, cb){
   const root = document.getElementById(id);
@@ -360,8 +399,8 @@ function bindSeg(id, key, cb){
     if(cb) cb(b.dataset.v);
   });
 }
-bindSeg('seg-type','type', v=>{ applyTypeVolume(v); renderParamRows(); markStale(); });
-bindSeg('seg-sanitizer','sanitizer', ()=>{ syncSanitizerParams(); renderParamRows(); markStale(); });
+bindSeg('seg-type','type', v=>{ applyTypeVolume(v); clearPresetSelection(); renderParamRows(); markStale(); });
+bindSeg('seg-sanitizer','sanitizer', ()=>{ syncSanitizerParams(); clearPresetSelection(); renderParamRows(); markStale(); });
 bindSeg('seg-filter','filter', ()=>{ markStale(); });
 bindSeg('seg-location','location', ()=>{ renderParamRows(); markStale(); });
 bindSeg('seg-shape','shape');
@@ -390,7 +429,7 @@ document.getElementById('calc-vol').addEventListener('click', ()=>{
   const L = parseFloat(document.getElementById('d-l').value)||0;
   const W = parseFloat(document.getElementById('d-w').value)||0;
   const H = parseFloat(document.getElementById('d-h').value)||0;
-  if(!L || !H || (state.shape==='rect' && !W)){ alert('Renseigne les dimensions.'); return; }
+  if(!L || !H || (state.shape==='rect' && !W)){ toast('Renseigne longueur, largeur et profondeur.'); return; }
   let m3;
   if(state.shape==='rond'){ const r=L/2; m3 = Math.PI*r*r*H; }
   else { m3 = L*W*H; }
@@ -500,10 +539,12 @@ function applyPreset(name){
   if(pre.sanitizer){ state.sanitizer=pre.sanitizer; setSeg('seg-sanitizer',pre.sanitizer); }
   if(pre.type){ state.type=pre.type; setSeg('seg-type',pre.type); applyTypeVolume(pre.type); }
   active = new Set(pre.params);
+  activePreset=name;
   document.querySelectorAll('#strip-presets .chip').forEach(c=>
     c.setAttribute('aria-pressed', c.dataset.preset===name ? 'true':'false'));
   renderParamRows();
   markStale();
+  toast('Préréglage appliqué : '+(PRESET_LABELS[name]||name));
 }
 document.getElementById('strip-presets').addEventListener('click', e=>{
   const c=e.target.closest('.chip'); if(c) applyPreset(c.dataset.preset);
@@ -583,10 +624,10 @@ function renderToggles(){
     if(key==='cl' && (state.sanitizer==='brome'||state.sanitizer==='oxygene')) continue;
     if(key==='br' && state.sanitizer!=='brome') continue;
     if(key==='sel' && state.sanitizer!=='sel') continue;
-    const chip=document.createElement('div');
-    chip.className='chip'; chip.textContent=PARAMS[key].name;
+    const chip=document.createElement('button');
+    chip.type='button'; chip.className='chip'; chip.textContent=PARAMS[key].name;
     chip.setAttribute('aria-pressed', active.has(key)?'true':'false');
-    chip.onclick=()=>{ active.has(key)?active.delete(key):active.add(key); renderToggles(); renderParamRows(); markStale(); };
+    chip.onclick=()=>{ active.has(key)?active.delete(key):active.add(key); clearPresetSelection(); renderToggles(); renderParamRows(); markStale(); };
     togglesEl.appendChild(chip);
   }
 }
@@ -616,6 +657,16 @@ function renderParamRows(){
     const small=document.createElement('small');
     small.textContent = t ? `cible ${t.ideal[0]}–${t.ideal[1]}${p.unit?(' '+p.unit):''}` : p.desc;
     name.appendChild(small);
+    // badge de confiance : n'apparaît qu'après une lecture pipette
+    const confEl=document.createElement('small'); confEl.className='confbadge'; confEl.hidden=true;
+    const info=pipetteInfo[key];
+    if(info){
+      confEl.hidden=false; confEl.classList.add('c-'+info.conf);
+      confEl.textContent = info.conf==='faible'
+        ? '📷 photo · confiance faible — calibre le blanc ou corrige au curseur'
+        : '📷 photo · confiance '+info.conf;
+    }
+    name.appendChild(confEl);
 
     // contrôle : pipette + slider
     const ctrl=document.createElement('div'); ctrl.className='ctrl';
@@ -628,7 +679,7 @@ function renderParamRows(){
       pip.setAttribute('aria-label','Prélever la couleur du '+p.name+' sur la photo');
       pip.textContent='💧';
       pip.onclick=()=>{
-        if(!imgLoaded){ alert('Charge d\'abord une photo de la bandelette (étape 2).'); return; }
+        if(!imgLoaded){ toast('Charge d\'abord une photo de la bandelette (étape 2).'); return; }
         if(pipetteKey===key){ disarmPipette(); }
         else { armPipette(key, p.name); pip.style.outline='2px solid var(--accent)'; }
       };
@@ -658,8 +709,10 @@ function renderParamRows(){
       const s=statusFor(key,v);
       pill.className='pill '+s.cls; pill.textContent=s.txt;
     }
-    range.addEventListener('input',()=>{ apply(parseFloat(range.value), true); markStale(); });
-    num.addEventListener('input',()=>{ apply(parseFloat(num.value), false); markStale(); });
+    // édition manuelle → la valeur n'est plus « issue de la photo »
+    function clearConf(){ if(pipetteInfo[key]){ delete pipetteInfo[key]; confEl.hidden=true; } }
+    range.addEventListener('input',()=>{ apply(parseFloat(range.value), true); clearConf(); markStale(); });
+    num.addEventListener('input',()=>{ apply(parseFloat(num.value), false); clearConf(); markStale(); });
     num.addEventListener('change',()=>{
       let v=parseFloat(num.value);
       if(isNaN(v)) v=values[key];
@@ -705,6 +758,7 @@ const wrap=document.getElementById('canvas-wrap');
 let imgLoaded=false, scale=1;
 
 drop.addEventListener('click',()=>fileIn.click());
+drop.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); fileIn.click(); } });
 fileIn.addEventListener('change',e=>{ const f=e.target.files[0]; if(f) loadImage(f); });
 ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();}));
 drop.addEventListener('drop',e=>{e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) loadImage(f);});
@@ -729,7 +783,7 @@ function disarmPipette(){
 document.getElementById('pick-cancel').addEventListener('click', disarmPipette);
 
 wbBtn.addEventListener('click',()=>{
-  if(!imgLoaded){ alert('Charge d\'abord une photo de la bandelette.'); return; }
+  if(!imgLoaded){ toast('Charge d\'abord une photo de la bandelette (étape 2).'); return; }
   if(pipetteKey==='__wb__'){ disarmPipette(); }
   else { armPipette('__wb__'); wbBtn.style.outline='2px solid var(--accent)'; }
 });
@@ -749,7 +803,7 @@ function loadImage(file){
     if(st) st.innerHTML='Astuce : clique « Calibrer le blanc » puis tape une zone <b>blanche</b> de la bandelette → la lumière est corrigée pour des lectures plus justes.';
     drop.querySelector('b').textContent='✅ Photo chargée — toucher pour en changer';
   };
-  img.onerror=()=>alert('Image illisible.');
+  img.onerror=()=>toast('Image illisible — essaie une autre photo.');
   img.src=URL.createObjectURL(file);
 }
 
@@ -819,11 +873,16 @@ function commitSample(cx,cy){
   const key=pipetteKey, m=matchScale(key,rgb);
   if(m){
     values[key]=m.value;
+    pipetteInfo[key]={conf:m.conf};                 // pour le badge de confiance
     ovx.strokeStyle='#22c3d6'; ovx.lineWidth=2;
     ovx.beginPath(); ovx.arc(cx,cy,8,0,Math.PI*2); ovx.stroke();
     renderParamRows(); markStale();
     const swatch=document.getElementById('sw-'+key);
     if(swatch) swatch.style.boxShadow='0 0 0 2px var(--accent)';
+    const lbl=PARAMS[key].name+' ≈ '+m.value+(PARAMS[key].unit?(' '+PARAMS[key].unit):'');
+    toast(m.conf==='faible'
+      ? '⚠️ '+lbl+' — confiance faible, calibre le blanc ou vérifie au curseur'
+      : '📷 '+lbl+' — confiance '+m.conf);
     document.getElementById('param-rows').scrollIntoView({behavior:'smooth',block:'center'});
   }
   disarmPipette();
@@ -891,8 +950,16 @@ function analyze(){
     if(val < t.cl.lo){
       const d=(t.cl.ideal[1]-val) * 1.5 * V; // ~1,5 g/m³ par +1 ppm (hypochlorite Ca ~70%)
       const overStab = active.has('cya') && values.cya>70;
+      const spa = state.type==='spa';
+      // Spa (petit volume chaud) → dichlore ; piscine → hypochlorite de calcium.
+      const prod = spa
+        ? '<b>dichlore</b> (chlore stabilisé en granulés, adapté aux petits volumes chauds)'
+        : '<b>chlore non stabilisé</b> (hypochlorite de calcium 70 %)';
       actions.push(pa(3,'Chlore libre insuffisant', `Chlore libre ≈ <b>${val} ppm</b> (cible ${t.cl.ideal[0]}–${t.cl.ideal[1]}). En dessous, l'eau n'est plus protégée (risque d'algues, eau trouble).`,
-        `Chlorer ≈ <span class="dose">${fmtDose(d)}</span> de <b>chlore non stabilisé</b> (hypochlorite de calcium 70 %) ${state.location==='exterieur'?'de préférence en soirée':''}. ${overStab?'⚠️ Stabilisant élevé : le chlore est « bloqué », une vidange partielle peut être nécessaire.':''} Vérifie aussi le pH (chlore inefficace si pH>7,6).`,true));
+        `Chlorer ≈ <span class="dose">${fmtDose(d)}</span> de ${prod}${(!spa && state.location==='exterieur')?', de préférence en soirée':''}. `
+        + `⚠️ <b>Ne jamais mettre en contact direct</b> l'hypochlorite de calcium et le chlore stabilisé (galets/trichlore) — même doseur, même skimmer : réaction violente possible. `
+        + (overStab?'⚠️ Stabilisant élevé : le chlore est « bloqué », une vidange partielle peut être nécessaire. ':'')
+        + `Vérifie aussi le pH (chlore inefficace si pH>7,6), et <b>attends que le chlore libre soit redescendu ≤ ${t.cl.hi} ppm avant la baignade</b>.`,true));
     } else if(val > t.cl.hi){
       actions.push(pa(3,'Chlore trop élevé', `Chlore libre ≈ <b>${val} ppm</b> (cible ${t.cl.ideal[0]}–${t.cl.ideal[1]}). Baignade déconseillée tant que > ${t.cl.hi+1} ppm (irritations).`,
         `Stopper toute chloration, laisser filtrer ; à l'extérieur le soleil fait baisser le taux en 1–2 jours. Pour accélérer : <b>neutralisant de chlore</b> (thiosulfate) selon notice, ou dilution.`,false));
