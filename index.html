@@ -82,7 +82,7 @@
   .btn:hover{border-color:var(--accent)}
   .btn.primary{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#03252e;border:none}
   .btn.ghost{background:transparent}
-  .btn.sm{padding:7px 10px;font-size:13px}
+  .btn.sm{padding:8px 12px;font-size:13px;min-height:44px}
   .btn:disabled{opacity:.5;cursor:not-allowed}
 
   /* Photo zone */
@@ -92,8 +92,23 @@
   }
   .drop:hover{border-color:var(--accent);color:var(--txt)}
   .canvas-wrap{position:relative;margin-top:12px;display:none}
-  canvas{max-width:100%;border-radius:12px;border:1px solid var(--line);display:block;cursor:crosshair;touch-action:none}
-  .canvas-tip{font-size:12px;color:var(--muted);margin-top:8px}
+  .canvas-stack{position:relative;display:inline-block;max-width:100%;line-height:0}
+  #cv{max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line);display:block;cursor:crosshair;touch-action:pan-y}
+  #cv-ov{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;border-radius:12px}
+  .loupe{position:absolute;width:120px;height:120px;border-radius:50%;border:3px solid var(--accent);
+    box-shadow:0 6px 20px rgba(0,0,0,.55);pointer-events:none;z-index:6;background:#06222b}
+  .pick-banner{display:flex;gap:10px;align-items:center;justify-content:space-between;
+    background:linear-gradient(180deg,var(--accent),var(--accent2));color:#03252e;
+    padding:10px 12px;border-radius:10px;font-weight:700;font-size:14px;margin-bottom:10px}
+  .pick-banner button{background:rgba(3,37,46,.14);border:1px solid rgba(3,37,46,.4);color:#03252e;
+    padding:8px 12px;border-radius:8px;font-weight:700;cursor:pointer;min-height:40px}
+  .canvas-tip{font-size:12.5px;color:var(--muted);margin-top:8px}
+  /* résultats périmés après modification des valeurs */
+  #results.stale .verdict, #results.stale #actions, #results.stale #maintenance{opacity:.4;filter:grayscale(.3)}
+  .stale-banner{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+    background:rgba(244,183,64,.16);border:1px solid rgba(244,183,64,.5);color:var(--warn);
+    padding:10px 12px;border-radius:10px;font-weight:600;font-size:13.5px;margin-bottom:12px}
+  .stale-banner button{background:var(--warn);color:#3a2c00;border:none;padding:9px 14px;border-radius:8px;font-weight:700;cursor:pointer;min-height:40px}
 
   /* parameter rows */
   .param{
@@ -118,7 +133,8 @@
   .toggle-list{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
   .chip{
     border:1px solid var(--line);background:#08303b;color:var(--muted);
-    padding:7px 11px;border-radius:999px;font-size:13px;cursor:pointer;user-select:none
+    padding:10px 14px;border-radius:999px;font-size:13px;cursor:pointer;user-select:none;
+    min-height:44px;display:inline-flex;align-items:center
   }
   .chip[aria-pressed="true"]{background:rgba(34,195,214,.18);color:var(--txt);border-color:var(--accent)}
 
@@ -254,12 +270,20 @@
     </div>
 
     <div class="canvas-wrap" id="canvas-wrap">
-      <canvas id="cv"></canvas>
+      <div class="pick-banner" id="pick-banner" hidden>
+        <span id="pick-banner-text">🎯 Touchez la pastille sur la photo</span>
+        <button type="button" id="pick-cancel">Annuler</button>
+      </div>
+      <div class="canvas-stack" id="canvas-stack">
+        <canvas id="cv"></canvas>
+        <canvas id="cv-ov"></canvas>
+        <canvas id="loupe" class="loupe" width="120" height="120" hidden></canvas>
+      </div>
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn sm" id="wb-btn" type="button">🎯 Calibrer le blanc</button>
         <span class="canvas-tip" id="wb-status" style="margin:0">Astuce : clique « Calibrer le blanc » puis tape une zone <b>blanche</b> de la bandelette → la lumière est corrigée pour des lectures plus justes.</span>
       </div>
-      <p class="canvas-tip">🔬 Ensuite, sélectionne une mesure ci-dessous (bouton 💧 <i>Pipette</i>), puis clique sur la pastille correspondante de la photo.</p>
+      <p class="canvas-tip">🔬 Ensuite, sélectionne une mesure ci-dessous (bouton 💧 <i>Pipette</i>), maintiens le doigt sur la pastille (une loupe apparaît) puis relâche pour valider.</p>
     </div>
   </section>
 
@@ -282,6 +306,10 @@
   <!-- RÉSULTATS -->
   <section class="card" id="results">
     <h2>🧭 Diagnostic & plan d'action</h2>
+    <div class="stale-banner" id="stale-banner" hidden>
+      <span>⚠️ Valeurs modifiées depuis la dernière analyse — le diagnostic ci-dessous est peut-être périmé.</span>
+      <button type="button" id="rerun-btn">Relancer l'analyse</button>
+    </div>
     <div id="verdict"></div>
     <div id="actions"></div>
     <div id="maintenance"></div>
@@ -313,6 +341,15 @@ const state = {
   shape:'rect', volume:50, temp:26,
 };
 
+/* Invalidation du diagnostic : dès qu'une valeur/un réglage change après une
+   analyse, on grise le résultat et on affiche un bandeau « relancer ». */
+let analyzed=false;
+function markStale(){
+  if(!analyzed) return;
+  document.getElementById('results').classList.add('stale');
+  document.getElementById('stale-banner').hidden=false;
+}
+
 /* --- Sélecteurs segmentés génériques --- */
 function bindSeg(id, key, cb){
   const root = document.getElementById(id);
@@ -323,21 +360,30 @@ function bindSeg(id, key, cb){
     if(cb) cb(b.dataset.v);
   });
 }
-bindSeg('seg-type','type', ()=>{ renderParamRows(); });
-bindSeg('seg-sanitizer','sanitizer', ()=>{ syncSanitizerParams(); renderParamRows(); });
-bindSeg('seg-filter','filter');
-bindSeg('seg-location','location', ()=>{ renderParamRows(); });
+bindSeg('seg-type','type', v=>{ applyTypeVolume(v); renderParamRows(); markStale(); });
+bindSeg('seg-sanitizer','sanitizer', ()=>{ syncSanitizerParams(); renderParamRows(); markStale(); });
+bindSeg('seg-filter','filter', ()=>{ markStale(); });
+bindSeg('seg-location','location', ()=>{ renderParamRows(); markStale(); });
 bindSeg('seg-shape','shape');
 
 const volIn = document.getElementById('vol');
 const volL  = document.getElementById('vol-l');
+let volumeTouched = false; // l'utilisateur a-t-il fixé le volume lui-même ?
 function refreshVolLabel(){
   const v = parseFloat(volIn.value)||0;
   state.volume = v;
   volL.textContent = Math.round(v*1000).toLocaleString('fr-BE');
 }
-volIn.addEventListener('input', refreshVolLabel);
-document.getElementById('temp').addEventListener('input', e=>{ state.temp = parseFloat(e.target.value)||0; });
+// Volume par défaut cohérent selon le type de bassin (spa ≈ 1,5 m³, piscine ≈ 50 m³).
+// N'écrase pas une valeur saisie explicitement par l'utilisateur.
+function defaultVolumeForType(type){ return type==='spa' ? 1.5 : 50; }
+function applyTypeVolume(type){
+  if(volumeTouched) return;
+  volIn.value = defaultVolumeForType(type);
+  refreshVolLabel();
+}
+volIn.addEventListener('input', ()=>{ volumeTouched = true; refreshVolLabel(); markStale(); });
+document.getElementById('temp').addEventListener('input', e=>{ state.temp = parseFloat(e.target.value)||0; markStale(); });
 refreshVolLabel();
 
 document.getElementById('calc-vol').addEventListener('click', ()=>{
@@ -349,7 +395,7 @@ document.getElementById('calc-vol').addEventListener('click', ()=>{
   if(state.shape==='rond'){ const r=L/2; m3 = Math.PI*r*r*H; }
   else { m3 = L*W*H; }
   m3 = Math.round(m3*10)/10;
-  volIn.value = m3; refreshVolLabel();
+  volIn.value = m3; volumeTouched = true; refreshVolLabel(); markStale();
 });
 
 /* ----------------------------------------------------------------------------
@@ -452,11 +498,12 @@ const STRIP_PRESETS = {
 function applyPreset(name){
   const pre=STRIP_PRESETS[name]; if(!pre) return;
   if(pre.sanitizer){ state.sanitizer=pre.sanitizer; setSeg('seg-sanitizer',pre.sanitizer); }
-  if(pre.type){ state.type=pre.type; setSeg('seg-type',pre.type); }
+  if(pre.type){ state.type=pre.type; setSeg('seg-type',pre.type); applyTypeVolume(pre.type); }
   active = new Set(pre.params);
   document.querySelectorAll('#strip-presets .chip').forEach(c=>
     c.setAttribute('aria-pressed', c.dataset.preset===name ? 'true':'false'));
   renderParamRows();
+  markStale();
 }
 document.getElementById('strip-presets').addEventListener('click', e=>{
   const c=e.target.closest('.chip'); if(c) applyPreset(c.dataset.preset);
@@ -539,7 +586,7 @@ function renderToggles(){
     const chip=document.createElement('div');
     chip.className='chip'; chip.textContent=PARAMS[key].name;
     chip.setAttribute('aria-pressed', active.has(key)?'true':'false');
-    chip.onclick=()=>{ active.has(key)?active.delete(key):active.add(key); renderToggles(); renderParamRows(); };
+    chip.onclick=()=>{ active.has(key)?active.delete(key):active.add(key); renderToggles(); renderParamRows(); markStale(); };
     togglesEl.appendChild(chip);
   }
 }
@@ -577,13 +624,13 @@ function renderParamRows(){
     range.type='range'; range.min=p.min; range.max=p.max; range.step=p.step; range.value=values[key];
     if(!p.noPhoto){
       const pip=document.createElement('button');
-      pip.className='btn sm'; pip.type='button'; pip.title='Échantillonner depuis la photo';
+      pip.className='btn sm'; pip.type='button';
+      pip.setAttribute('aria-label','Prélever la couleur du '+p.name+' sur la photo');
       pip.textContent='💧';
       pip.onclick=()=>{
-        if(!imgLoaded){ alert('Charge d\'abord une photo de la bandelette.'); return; }
-        pipetteKey = pipetteKey===key ? null : key;
-        document.querySelectorAll('.param .btn.sm').forEach(b=>b.style.outline='');
-        if(pipetteKey) pip.style.outline='2px solid var(--accent)';
+        if(!imgLoaded){ alert('Charge d\'abord une photo de la bandelette (étape 2).'); return; }
+        if(pipetteKey===key){ disarmPipette(); }
+        else { armPipette(key, p.name); pip.style.outline='2px solid var(--accent)'; }
       };
       ctrl.appendChild(pip);
     }
@@ -600,21 +647,29 @@ function renderParamRows(){
     const pill=document.createElement('span'); pill.className='pill '; pill.id='pill-'+key;
     right.appendChild(vb); right.appendChild(pill);
 
-    function sync(v){
-      v=parseFloat(v); if(isNaN(v)) return;
-      v=Math.min(p.max,Math.max(p.min,v));
-      values[key]=v; range.value=v; num.value=v;
-      const m = matchScale(key,[0,0,0]); // not used; swatch by value below
+    // Met à jour le modèle + l'affichage. writeNum=false → NE réécrit PAS le
+    // champ nombre pendant la frappe (sinon taper « 7. » ou « 0.5 » efface le
+    // point car parseFloat le supprime). Le clamp/normalisation se fait au blur.
+    function apply(v, writeNum){
+      if(isNaN(v)) return;
+      values[key]=v; range.value=v;
+      if(writeNum) num.value=v;
       sw.style.background = colorForValue(key, v);
       const s=statusFor(key,v);
       pill.className='pill '+s.cls; pill.textContent=s.txt;
     }
-    range.addEventListener('input',()=>sync(range.value));
-    num.addEventListener('input',()=>sync(num.value));
+    range.addEventListener('input',()=>{ apply(parseFloat(range.value), true); markStale(); });
+    num.addEventListener('input',()=>{ apply(parseFloat(num.value), false); markStale(); });
+    num.addEventListener('change',()=>{
+      let v=parseFloat(num.value);
+      if(isNaN(v)) v=values[key];
+      v=Math.min(p.max,Math.max(p.min,v));
+      num.value=v; apply(v, true);
+    });
 
     row.appendChild(name); row.appendChild(ctrl); row.appendChild(right);
     rowsEl.appendChild(row);
-    sync(values[key]);
+    apply(values[key], true);
   }
 }
 
@@ -641,6 +696,11 @@ const drop=document.getElementById('drop');
 const fileIn=document.getElementById('file');
 const cv=document.getElementById('cv');
 const ctx=cv.getContext('2d', {willReadFrequently:true});
+const ov=document.getElementById('cv-ov');            // calque des marqueurs (image source vierge)
+const ovx=ov.getContext('2d');
+const loupe=document.getElementById('loupe');
+const lpx=loupe.getContext('2d');
+const wbBtn=document.getElementById('wb-btn');
 const wrap=document.getElementById('canvas-wrap');
 let imgLoaded=false, scale=1;
 
@@ -649,12 +709,29 @@ fileIn.addEventListener('change',e=>{ const f=e.target.files[0]; if(f) loadImage
 ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();}));
 drop.addEventListener('drop',e=>{e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) loadImage(f);});
 
-const wbBtn=document.getElementById('wb-btn');
+/* --- Armement de la pipette : bandeau d'aide + défilement vers la photo --- */
+function clearArmUI(){
+  document.querySelectorAll('.param .btn.sm').forEach(b=>b.style.outline='');
+  wbBtn.style.outline='';
+}
+function armPipette(key,label){
+  pipetteKey=key; clearArmUI();
+  document.getElementById('pick-banner-text').textContent = key==='__wb__'
+    ? '🎯 Touchez une zone BLANCHE de la bandelette (calibrage lumière)'
+    : '🎯 Touchez la pastille « '+label+' » — maintenez, puis relâchez';
+  document.getElementById('pick-banner').hidden=false;
+  wrap.scrollIntoView({behavior:'smooth', block:'center'});
+}
+function disarmPipette(){
+  pipetteKey=null; aiming=false; clearArmUI(); hideLoupe();
+  document.getElementById('pick-banner').hidden=true;
+}
+document.getElementById('pick-cancel').addEventListener('click', disarmPipette);
+
 wbBtn.addEventListener('click',()=>{
   if(!imgLoaded){ alert('Charge d\'abord une photo de la bandelette.'); return; }
-  pipetteKey = pipetteKey==='__wb__' ? null : '__wb__';
-  document.querySelectorAll('.param .btn.sm').forEach(b=>b.style.outline='');
-  wbBtn.style.outline = pipetteKey==='__wb__' ? '2px solid var(--accent)' : '';
+  if(pipetteKey==='__wb__'){ disarmPipette(); }
+  else { armPipette('__wb__'); wbBtn.style.outline='2px solid var(--accent)'; }
 });
 
 function loadImage(file){
@@ -662,11 +739,12 @@ function loadImage(file){
   img.onload=()=>{
     const maxW=Math.min(720, img.naturalWidth);
     scale = maxW/img.naturalWidth;
-    cv.width=Math.round(img.naturalWidth*scale);
-    cv.height=Math.round(img.naturalHeight*scale);
+    cv.width=ov.width=Math.round(img.naturalWidth*scale);
+    cv.height=ov.height=Math.round(img.naturalHeight*scale);
     ctx.drawImage(img,0,0,cv.width,cv.height);
+    ovx.clearRect(0,0,ov.width,ov.height);          // marqueurs remis à zéro
     imgLoaded=true; wrap.style.display='block';
-    whiteRef=null; // nouvelle photo → calibrage du blanc à refaire
+    whiteRef=null; disarmPipette();                 // nouvelle photo → calibrage à refaire
     const st=document.getElementById('wb-status');
     if(st) st.innerHTML='Astuce : clique « Calibrer le blanc » puis tape une zone <b>blanche</b> de la bandelette → la lumière est corrigée pour des lectures plus justes.';
     drop.querySelector('b').textContent='✅ Photo chargée — toucher pour en changer';
@@ -680,43 +758,75 @@ function sampleAt(cx,cy){
   const x0=Math.max(0,cx-R), y0=Math.max(0,cy-R);
   const w=Math.min(cv.width,cx+R)-x0, h=Math.min(cv.height,cy+R)-y0;
   if(w<=0||h<=0) return null;
-  const d=ctx.getImageData(x0,y0,w,h).data;
+  const d=ctx.getImageData(x0,y0,w,h).data;         // lit l'IMAGE (cv), jamais les marqueurs (ov)
   for(let i=0;i<d.length;i+=4){ r+=d[i];g+=d[i+1];b+=d[i+2];n++; }
   return [Math.round(r/n),Math.round(g/n),Math.round(b/n)];
 }
 
-cv.addEventListener('click',handlePick);
-function handlePick(e){
-  if(!pipetteKey){ return; }
-  const rect=cv.getBoundingClientRect();
-  const cx=Math.round((e.clientX-rect.left)*(cv.width/rect.width));
-  const cy=Math.round((e.clientY-rect.top)*(cv.height/rect.height));
-  const rgb=sampleAt(cx,cy); if(!rgb) return;
+/* --- Loupe de visée : agrandit la zone sous le doigt --- */
+function hideLoupe(){ loupe.hidden=true; }
+function showLoupe(cx,cy,clientX,clientY){
+  const Z=4, S=loupe.width, src=S/Z;                // fenêtre source de src px agrandie Z×
+  lpx.imageSmoothingEnabled=false;
+  lpx.clearRect(0,0,S,S);
+  lpx.drawImage(cv, cx-src/2, cy-src/2, src, src, 0,0,S,S);
+  lpx.strokeStyle='rgba(255,255,255,.9)'; lpx.lineWidth=1;
+  lpx.beginPath(); lpx.moveTo(S/2,0); lpx.lineTo(S/2,S); lpx.moveTo(0,S/2); lpx.lineTo(S,S/2); lpx.stroke();
+  lpx.strokeStyle='#22c3d6'; lpx.lineWidth=2; lpx.strokeRect(S/2-6,S/2-6,12,12);
+  const stack=document.getElementById('canvas-stack').getBoundingClientRect();
+  let lx=clientX-stack.left-S/2, ly=clientY-stack.top-S-24; // au-dessus du doigt
+  lx=Math.max(0,Math.min(stack.width-S,lx));
+  if(ly<0) ly=clientY-stack.top+24;                 // sinon en dessous
+  loupe.style.left=lx+'px'; loupe.style.top=ly+'px';
+  loupe.hidden=false;
+}
 
+/* --- Visée par pointeur : maintien = loupe, relâcher = prélèvement --- */
+let aiming=false, aimX=0, aimY=0;
+function toCanvas(e){
+  const rect=cv.getBoundingClientRect();
+  return [Math.round((e.clientX-rect.left)*(cv.width/rect.width)),
+          Math.round((e.clientY-rect.top)*(cv.height/rect.height))];
+}
+cv.addEventListener('pointerdown', e=>{
+  if(!pipetteKey) return;                            // sans pipette armée : défilement normal
+  e.preventDefault(); aiming=true;
+  try{ cv.setPointerCapture(e.pointerId); }catch(_){}
+  [aimX,aimY]=toCanvas(e); showLoupe(aimX,aimY,e.clientX,e.clientY);
+});
+cv.addEventListener('pointermove', e=>{
+  if(!aiming) return;
+  e.preventDefault();
+  [aimX,aimY]=toCanvas(e); showLoupe(aimX,aimY,e.clientX,e.clientY);
+});
+cv.addEventListener('pointerup', ()=>{
+  if(!aiming) return;
+  aiming=false; hideLoupe(); commitSample(aimX,aimY);
+});
+cv.addEventListener('pointercancel', ()=>{ aiming=false; hideLoupe(); });
+
+function commitSample(cx,cy){
+  const rgb=sampleAt(cx,cy); if(!rgb) return;
   // Calibrage du blanc : on mémorise la dominante puis on sort.
   if(pipetteKey==='__wb__'){
-    whiteRef = rgb;
-    ctx.strokeStyle='#ffffff'; ctx.lineWidth=2;
-    ctx.strokeRect(cx-9,cy-9,18,18);
+    whiteRef=rgb;
+    ovx.strokeStyle='#ffffff'; ovx.lineWidth=2; ovx.strokeRect(cx-9,cy-9,18,18);
     const st=document.getElementById('wb-status');
     if(st) st.textContent='✅ Blanc calibré — les lectures pipette sont maintenant corrigées de la lumière.';
-    pipetteKey=null;
-    document.getElementById('wb-btn').style.outline='';
+    disarmPipette();
     return;
   }
-
-  const m=matchScale(pipetteKey,rgb);
+  const key=pipetteKey, m=matchScale(key,rgb);
   if(m){
-    values[pipetteKey]=m.value;
-    // marqueur visuel
-    ctx.strokeStyle='#22c3d6'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.arc(cx,cy,8,0,Math.PI*2); ctx.stroke();
-    renderParamRows();
-    const swatch=document.getElementById('sw-'+pipetteKey);
-    if(swatch) swatch.style.boxShadow=`0 0 0 2px var(--accent)`;
+    values[key]=m.value;
+    ovx.strokeStyle='#22c3d6'; ovx.lineWidth=2;
+    ovx.beginPath(); ovx.arc(cx,cy,8,0,Math.PI*2); ovx.stroke();
+    renderParamRows(); markStale();
+    const swatch=document.getElementById('sw-'+key);
+    if(swatch) swatch.style.boxShadow='0 0 0 2px var(--accent)';
+    document.getElementById('param-rows').scrollIntoView({behavior:'smooth',block:'center'});
   }
-  pipetteKey=null;
-  document.querySelectorAll('.param .btn.sm').forEach(b=>b.style.outline='');
+  disarmPipette();
 }
 
 /* ----------------------------------------------------------------------------
@@ -735,11 +845,18 @@ function fmtMl(ml){
 function analyze(){
   const V=state.volume, t=targets();
   const actions=[];
-  const v = k => active.has(k) ? values[k] : null;
 
   // Compteur d'état global
   let problems=0, measured=0;
   for(const k of Object.keys(t)){ if(active.has(k)){ measured++; if(statusFor(k,values[k]).cls!=='ok') problems++; } }
+
+  /* Garde-fou sécurité : un spa fait ~1–2 m³. À un volume de piscine, les doses
+     seraient surestimées d'un facteur ~25–50 → on alerte AVANT tout dosage. */
+  if(state.type==='spa' && V>10){
+    actions.push(pa(-1, '⚠️ Volume anormal pour un spa',
+      `Volume indiqué : <b>${(V||0).toLocaleString('fr-BE')} m³</b>. Un spa/jacuzzi contient généralement <b>1 à 2 m³</b> d'eau. À ce volume, les dosages ci-dessous seraient très largement surestimés (risque de surdosage dangereux).`,
+      `Corrige le <b>volume d'eau</b> à l'étape 1 (ex. 1,5 m³) avant d'appliquer la moindre dose.`, true));
+  }
 
   /* 1) Alcalinité (TAC) — à régler avant le pH car elle le stabilise */
   if(active.has('tac') && t.tac){
@@ -864,6 +981,11 @@ function render(actions, problems, measured){
   const actsEl=document.getElementById('actions');
   const maint=document.getElementById('maintenance');
 
+  // diagnostic à jour → on lève l'état « périmé »
+  analyzed=true;
+  res.classList.remove('stale');
+  document.getElementById('stale-banner').hidden=true;
+
   // tri : priorité d'action puis criticité
   actions.sort((a,b)=> (a.prio-b.prio) || (b.isPrio - a.isPrio));
 
@@ -914,6 +1036,7 @@ function render(actions, problems, measured){
 }
 
 document.getElementById('analyze').addEventListener('click',analyze);
+document.getElementById('rerun-btn').addEventListener('click',analyze);
 
 /* init */
 renderParamRows();
